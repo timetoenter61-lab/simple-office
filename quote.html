@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Create and download a customer quote with this simple quote generator from YOUR BUSINESS NAME.">
+  <link rel="canonical" href="https://YOUR-DOMAIN.COM/quote.html">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Quote Generator | YOUR BUSINESS NAME">
+  <meta property="og:description" content="Create and download a customer quote with this simple quote generator.">
+  <meta property="og:url" content="https://YOUR-DOMAIN.COM/quote.html">
+  <meta property="og:image" content="https://YOUR-DOMAIN.COM/officeprint.jpg">
+  <title>Quote Generator | YOUR BUSINESS NAME</title>
+ 
+  <!-- 1. Tailwind CSS CDN for styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+ 
+  <!-- 2. Alpine.js CDN for reactive data and calculations -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+ 
+  <!-- 3. html2pdf CDN for downloading the quote as a PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+  <style>
+    html { font-size: 18px; }
+
+    @media print {
+      html { font-size: 16px; }
+      body { background: white; padding: 0; }
+      .no-print { display: none !important; }
+      #quote-content { max-width: none; border-radius: 0; box-shadow: none; }
+    }
+
+    html.pdf-export { font-size: 16px; }
+    html.pdf-export #quote-content { max-width: 48rem; }
+  </style>
+</head>
+<body class="bg-gray-100 py-10 px-4" x-data="quoteApp()">
+
+  <nav class="no-print max-w-5xl mx-auto mb-6 flex flex-wrap justify-center gap-4 text-sm font-semibold" aria-label="Page navigation">
+    <a class="text-blue-700 hover:underline" href="index.html">Home</a>
+    <a class="text-blue-700 hover:underline" href="page2.html">Payment Page</a>
+    <a class="text-blue-700 hover:underline" href="invoice.html">Invoice</a>
+    <a class="text-blue-700 hover:underline" href="quote.html" aria-current="page">Quote</a>
+  </nav>
+
+  <!-- Main Quote Container -->
+  <div class="max-w-5xl mx-auto bg-white p-8 rounded-xl shadow-md" id="quote-content">
+   
+    <!-- Header -->
+    <div class="flex justify-between items-start border-b pb-6 mb-6">
+      <div>
+        <h1 class="text-3xl font-bold text-gray-800">QUOTE</h1>
+        <p class="text-sm text-gray-500 mt-1">Issued: <span x-text="currentDate"></span></p>
+        <p class="text-sm text-gray-500 mt-1">Valid Until: <span x-text="validUntil"></span></p>
+      </div>
+      <div class="text-right">
+        <label for="quote-number" class="block text-xs text-gray-500 mb-1">Quote Number</label>
+        <input id="quote-number" type="text" x-model="quoteNumber" aria-label="Quote number" placeholder="QUO-2026-001" class="border rounded p-1 text-right font-mono font-semibold text-gray-700 w-40">
+      </div>
+    </div>
+
+    <!-- Business & Client Info -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
+      <!-- Your Business Info -->
+      <div class="bg-gray-50 p-4 rounded-lg border">
+        <h3 class="font-semibold text-gray-700 mb-2 text-sm uppercase tracking-wide">Prepared By</h3>
+        <input type="text" x-model="businessName" aria-label="Business name" placeholder="Your Business Name" class="border rounded p-2 w-full text-sm mb-2">
+        <input type="text" x-model="businessContact" aria-label="Business contact details" placeholder="Email / Phone / Address" class="border rounded p-2 w-full text-xs">
+        <p class="text-sm text-gray-600 mt-2"><strong>ABN:</strong> <input type="text" x-model="abn" :readonly="abnLocked" aria-label="Australian Business Number" inputmode="numeric" maxlength="14" placeholder="12 345 678 901" class="border-b bg-transparent w-full text-xs outline-none focus:border-blue-500"></p>
+        <div class="mt-2 flex gap-3 text-xs no-print">
+          <button x-show="!abnLocked" @click="saveAbn" class="text-blue-600 hover:underline font-semibold">Save and lock ABN</button>
+          <button x-show="abnLocked" @click="editAbn" class="text-blue-600 hover:underline font-semibold">Edit ABN</button>
+          <button x-show="abnEditing" @click="cancelAbnEdit" class="text-gray-600 hover:underline">Cancel</button>
+        </div>
+        <p x-show="abnStatus" x-text="abnStatus" aria-live="polite" class="mt-1 text-xs text-gray-600 no-print"></p>
+      </div>
+
+      <!-- Client Details -->
+      <div>
+        <h3 class="font-semibold text-gray-700 mb-2 text-sm uppercase tracking-wide">Prepared For</h3>
+        <input type="text" x-model="clientName" aria-label="Client or business name" placeholder="Client / Business Name" class="border rounded p-2 w-full text-sm mb-2">
+        <textarea x-model="clientAddress" aria-label="Client address and details" placeholder="Client Address / Details..." class="border rounded p-2 w-full text-xs h-16 resize-none"></textarea>
+      </div>
+    </div>
+
+    <!-- Line Items Table -->
+    <div class="mb-6 overflow-x-auto">
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="border-b bg-gray-50 text-xs font-semibold text-gray-600 uppercase">
+            <th class="py-2 px-3">Description</th>
+            <th class="py-2 px-3 w-20 text-center">Qty</th>
+            <th class="py-2 px-3 w-28 text-right">Unit Price ($)</th>
+            <th class="py-2 px-3 w-28 text-right">Amount ($)</th>
+            <th class="py-2 px-3 w-10 no-print"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(item, index) in items" :key="index">
+            <tr class="border-b text-sm">
+              <td class="py-2 px-3"><input type="text" x-model="item.description" aria-label="Item description" placeholder="Describe the proposed work or item" class="w-full border rounded p-1 text-sm"></td>
+              <td class="py-2 px-3"><input type="number" min="0" step="any" x-model.number="item.qty" @input="calculateTotals" aria-label="Quantity" class="w-full border rounded p-1 text-center text-sm"></td>
+              <td class="py-2 px-3"><input type="text" inputmode="decimal" x-model="item.rate" @input="calculateTotals" @blur="formatRate(item)" aria-label="Rate in dollars and cents" placeholder="0.00" class="w-full border rounded p-1 text-right text-sm"></td>
+              <td class="py-2 px-3 text-right font-medium text-gray-700" x-text="lineAmount(item).toFixed(2)"></td>
+              <td class="py-2 px-3 text-center no-print">
+                <button @click="removeItem(index)" :aria-label="`Remove item ${index + 1}`" class="text-red-500 hover:text-red-700 font-bold">&times;</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+     
+      <!-- Add Item Button -->
+      <button @click="addItem" class="mt-3 text-sm text-blue-600 hover:text-blue-800 font-semibold no-print">+ Add Quote Item</button>
+    </div>
+
+    <!-- Totals Summary -->
+    <div class="flex justify-end border-t pt-4 mb-8">
+      <div class="w-64 space-y-2">
+        <label class="flex items-start gap-2 text-sm text-gray-600">
+          <input type="checkbox" :checked="gstMode === 'add'" @change="selectGstMode('add', $event.target.checked)" aria-label="Add 10 percent GST to prices" class="mt-1">
+          <span>Add 10% GST to prices</span>
+        </label>
+        <label class="flex items-start gap-2 text-sm text-gray-600">
+          <input type="checkbox" :checked="gstMode === 'included'" @change="selectGstMode('included', $event.target.checked)" aria-label="GST is included in prices" class="mt-1">
+          <span>GST (10%) is already included in prices</span>
+        </label>
+        <div class="flex justify-between text-sm text-gray-600">
+          <span x-text="gstMode === 'included' ? 'Estimated Subtotal (GST inclusive):' : 'Estimated Subtotal:'"></span>
+          <span>$<span x-text="subtotal"></span></span>
+        </div>
+        <div class="flex justify-between text-sm text-gray-600">
+          <span>GST (<span x-text="(gstRate * 100).toFixed(0)"></span>%):</span>
+          <span>$<span x-text="gstAmount"></span></span>
+        </div>
+        <div class="flex justify-between text-lg font-bold text-gray-800 border-t pt-2">
+          <span>Estimated Total:</span>
+          <span>$<span x-text="grandTotal"></span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
+      <div class="bg-amber-50 p-4 rounded-lg border border-amber-200">
+        <h3 class="font-semibold text-gray-700 mb-2 text-sm uppercase tracking-wide">Quote Notes &amp; Terms</h3>
+        <textarea x-model="quoteNotes" aria-label="Quote notes and terms" class="border rounded p-2 w-full text-sm min-h-24 resize-y"></textarea>
+        <p class="text-xs text-gray-600 mt-2">This quote is an estimate and is valid until the date shown above. Work will begin once the quote is approved.</p>
+      </div>
+      <div class="bg-gray-50 p-4 rounded-lg border">
+        <h3 class="font-semibold text-gray-700 mb-2 text-sm uppercase tracking-wide">Approval</h3>
+        <p class="text-sm text-gray-600 mb-3">I approve this quote and authorize the proposed work.</p>
+        <label class="block text-xs text-gray-600 mb-1" for="approval-name">Name</label>
+        <input id="approval-name" type="text" x-model="approvalName" aria-label="Approver name" class="border-b bg-transparent w-full text-sm mb-3 outline-none focus:border-blue-500">
+        <label class="block text-xs text-gray-600 mb-1" for="approval-date">Date</label>
+        <input id="approval-date" type="text" x-model="approvalDate" aria-label="Approval date" placeholder=" " class="border-b bg-transparent w-full text-sm outline-none focus:border-blue-500">
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Action Buttons Toolbar (Hidden in PDF/Print) -->
+  <div class="max-w-5xl mx-auto mt-6 flex justify-between items-center no-print">
+    <div class="flex items-center gap-3">
+      <button @click="nextQuote" class="bg-green-600 text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-green-700 shadow transition">
+        Next Quote
+      </button>
+      <button @click="downloadPDF" class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 shadow transition">
+        Download PDF
+      </button>
+    </div>
+  </div>
+  <p x-show="saveStatus" x-text="saveStatus" aria-live="polite" class="no-print max-w-5xl mx-auto mt-2 text-sm text-gray-700 text-right"></p>
+
+  <!-- Saved Quotes -->
+  <div x-show="savedQuotes.length" class="no-print max-w-5xl mx-auto mt-6 bg-white p-4 rounded-xl shadow-md">
+    <h2 class="font-semibold text-gray-700 mb-2 text-sm uppercase tracking-wide">Saved Quotes</h2>
+    <table class="w-full text-sm text-left">
+      <thead>
+        <tr class="border-b text-xs text-gray-600 uppercase">
+          <th class="py-1 px-2">Quote</th>
+          <th class="py-1 px-2">Date</th>
+          <th class="py-1 px-2">Client</th>
+          <th class="py-1 px-2 text-right">Total ($)</th>
+          <th class="py-1 px-2"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="saved in savedQuotes" :key="saved.quoteNumber">
+          <tr class="border-b">
+            <td class="py-1 px-2 font-mono" x-text="saved.quoteNumber"></td>
+            <td class="py-1 px-2" x-text="saved.currentDate"></td>
+            <td class="py-1 px-2" x-text="saved.clientName"></td>
+            <td class="py-1 px-2 text-right" x-text="saved.grandTotal"></td>
+            <td class="py-1 px-2 text-right whitespace-nowrap">
+              <button @click="loadQuote(saved.quoteNumber)" class="text-blue-600 hover:underline font-semibold">Open</button>
+              <button @click="deleteQuote(saved.quoteNumber)" class="text-red-500 hover:underline ml-3">Delete</button>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Alpine.js Application Logic -->
+  <script>
+    function quoteApp() {
+      const issued = new Date();
+      const expiry = new Date(issued);
+      expiry.setDate(expiry.getDate() + 30);
+      return {
+        init() {
+          try {
+            const savedAbn = localStorage.getItem('invoiceAbn');
+            if (savedAbn) {
+              this.abn = savedAbn;
+              this.savedAbn = savedAbn;
+              this.abnLocked = true;
+            }
+          } catch (error) {
+            console.error('Could not load the saved ABN:', error);
+            this.abnStatus = 'Could not load the saved ABN from this browser.';
+          }
+          try {
+            const list = JSON.parse(localStorage.getItem('savedQuotes') || '[]');
+            this.savedQuotes = Array.isArray(list) ? list : [];
+            const nextNumber = localStorage.getItem('nextQuoteNumber');
+            if (nextNumber) this.quoteNumber = nextNumber;
+          } catch (error) {
+            console.error('Could not load saved quotes:', error);
+          }
+        },
+        savedQuotes: [],
+        saveStatus: '',
+        gstRate: 0.10,
+        gstMode: 'none',
+        gstAmount: '0.00',
+        abn: '',
+        savedAbn: '',
+        abnLocked: false,
+        abnEditing: false,
+        abnStatus: '',
+        currentDate: issued.toLocaleDateString(),
+        validUntil: expiry.toLocaleDateString(),
+        quoteNumber: 'QUO-2026-001',
+        businessName: 'Your Business Name',
+        businessContact: '',
+        clientName: '',
+        clientAddress: '',
+        quoteNotes: 'Pricing is based on the scope described above. Any changes to the agreed scope may affect the final price.',
+        approvalName: '',
+        approvalDate: '',
+        items: [
+          { description: 'Proposed service / item', qty: 1, rate: '100.00' }
+        ],
+        subtotal: '100.00',
+        grandTotal: '100.00',
+
+        saveAbn() {
+          const digits = this.abn.replace(/\s/g, '');
+          if (!/^\d{11}$/.test(digits)) {
+            this.abnStatus = 'Enter an 11-digit ABN.';
+            return;
+          }
+
+          const formattedAbn = digits.replace(/^(\d{2})(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3 $4');
+          try {
+            localStorage.setItem('invoiceAbn', formattedAbn);
+            this.abn = formattedAbn;
+            this.savedAbn = formattedAbn;
+            this.abnLocked = true;
+            this.abnEditing = false;
+            this.abnStatus = 'ABN saved and locked in this browser.';
+          } catch (error) {
+            console.error('Could not save the ABN:', error);
+            this.abnStatus = 'Could not save the ABN. Check browser storage settings and try again.';
+          }
+        },
+
+        editAbn() {
+          this.abnEditing = true;
+          this.abnLocked = false;
+          this.abnStatus = '';
+        },
+
+        cancelAbnEdit() {
+          this.abn = this.savedAbn;
+          this.abnEditing = false;
+          this.abnLocked = true;
+          this.abnStatus = '';
+        },
+
+        addItem() {
+          this.items.push({ description: '', qty: 1, rate: '0.00' });
+          this.calculateTotals();
+        },
+
+        removeItem(index) {
+          if (this.items.length > 1) {
+            this.items.splice(index, 1);
+            this.calculateTotals();
+          }
+        },
+
+        calculateTotals() {
+          const subtotal = Number(this.items.reduce((acc, item) => acc + this.lineAmount(item), 0).toFixed(2));
+          const gst = Number((this.gstMode === 'included'
+            ? subtotal * this.gstRate / (1 + this.gstRate)
+            : this.gstMode === 'add' ? subtotal * this.gstRate : 0).toFixed(2));
+          this.subtotal = subtotal.toFixed(2);
+          this.gstAmount = gst.toFixed(2);
+          this.grandTotal = (this.gstMode === 'add' ? subtotal + gst : subtotal).toFixed(2);
+        },
+
+        selectGstMode(mode, enabled) {
+          if (enabled) {
+            this.gstMode = mode;
+          } else if (this.gstMode === mode) {
+            this.gstMode = 'none';
+          }
+          this.calculateTotals();
+        },
+
+        lineAmount(item) {
+          const qty = Number(item.qty);
+          const rate = Number(item.rate);
+          if (!Number.isFinite(qty) || !Number.isFinite(rate) || qty < 0 || rate < 0) return 0;
+          const amount = qty * rate;
+          return Number.isFinite(amount) ? amount : 0;
+        },
+
+        formatRate(item) {
+          if (item.rate === '') return;
+          const rate = Number(item.rate);
+          if (!Number.isFinite(rate) || rate < 0) return;
+          item.rate = rate.toFixed(2);
+          this.calculateTotals();
+        },
+
+        newDates() {
+          const issuedOn = new Date();
+          const expiresOn = new Date(issuedOn);
+          expiresOn.setDate(expiresOn.getDate() + 30);
+          this.currentDate = issuedOn.toLocaleDateString();
+          this.validUntil = expiresOn.toLocaleDateString();
+        },
+
+        nextNumberAfter(number) {
+          const match = number.match(/^(.*?)(\d+)(\D*)$/);
+          if (!match) return number + '-2';
+          const next = String(Number(match[2]) + 1).padStart(match[2].length, '0');
+          return match[1] + next + match[3];
+        },
+
+        persistQuote() {
+          const number = this.quoteNumber.trim();
+          if (!number) return false;
+          const existing = this.savedQuotes.findIndex(q => q.quoteNumber === number);
+          const record = JSON.parse(JSON.stringify({
+            quoteNumber: number,
+            currentDate: this.currentDate,
+            validUntil: this.validUntil,
+            businessName: this.businessName,
+            businessContact: this.businessContact,
+            clientName: this.clientName,
+            clientAddress: this.clientAddress,
+            quoteNotes: this.quoteNotes,
+            approvalName: this.approvalName,
+            approvalDate: this.approvalDate,
+            gstMode: this.gstMode,
+            items: this.items,
+            subtotal: this.subtotal,
+            gstAmount: this.gstAmount,
+            grandTotal: this.grandTotal
+          }));
+          const updated = [...this.savedQuotes];
+          if (existing !== -1) updated[existing] = record; else updated.push(record);
+          try {
+            localStorage.setItem('savedQuotes', JSON.stringify(updated));
+          } catch (error) {
+            console.error('Could not save the quote:', error);
+            this.saveStatus = 'PDF downloaded, but a copy could not be kept in this browser.';
+            return false;
+          }
+          this.savedQuotes = updated;
+          this.saveStatus = `Quote ${number} downloaded and saved.`;
+          return true;
+        },
+
+        nextQuote() {
+          const number = this.quoteNumber.trim();
+          const alreadySaved = this.savedQuotes.some(q => q.quoteNumber === number);
+          if (!alreadySaved && !confirm(`Quote ${number} has not been downloaded. Move to the next quote anyway?`)) return;
+          const next = this.nextNumberAfter(number || 'QUO-2026-000');
+          try {
+            localStorage.setItem('nextQuoteNumber', next);
+          } catch (error) {
+            console.error('Could not store the next quote number:', error);
+          }
+          this.quoteNumber = next;
+          this.saveStatus = `Now on quote ${next}.`;
+          this.newDates();
+          this.clientName = '';
+          this.clientAddress = '';
+          this.approvalName = '';
+          this.approvalDate = '';
+          this.gstMode = 'none';
+          this.items = [{ description: '', qty: 1, rate: '0.00' }];
+          this.calculateTotals();
+        },
+
+        loadQuote(number) {
+          const saved = this.savedQuotes.find(q => q.quoteNumber === number);
+          if (!saved) return;
+          Object.assign(this, JSON.parse(JSON.stringify(saved)));
+          this.saveStatus = `Quote ${number} opened. Download the PDF again to update it.`;
+        },
+
+        deleteQuote(number) {
+          if (!confirm(`Delete saved quote ${number}?`)) return;
+          const updated = this.savedQuotes.filter(q => q.quoteNumber !== number);
+          try {
+            localStorage.setItem('savedQuotes', JSON.stringify(updated));
+          } catch (error) {
+            console.error('Could not delete the quote:', error);
+            this.saveStatus = 'Could not delete the quote.';
+            return;
+          }
+          this.savedQuotes = updated;
+          this.saveStatus = `Quote ${number} deleted.`;
+        },
+
+        async downloadPDF() {
+          const element = document.getElementById('quote-content');
+          const filename = (this.quoteNumber.trim() || 'quote').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+          const opt = {
+            margin:       0.4,
+            filename:     `${filename}.pdf`,
+            image:        { type: 'jpeg', quality: 0.98 },
+            html2canvas:  { scale: 2, useCORS: true },
+            jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+          };
+          if (typeof html2pdf !== 'function') {
+            alert('PDF export is unavailable. Check your internet connection and try again.');
+            return;
+          }
+          if (!element) {
+            alert('Could not find the quote to export. Please refresh the page and try again.');
+            return;
+          }
+          document.documentElement.classList.add('pdf-export');
+          try {
+            await html2pdf().set(opt).from(element).save();
+            this.persistQuote();
+          } catch (error) {
+            console.error('PDF export failed:', error);
+            alert('Could not create the PDF. Please try again.');
+          } finally {
+            document.documentElement.classList.remove('pdf-export');
+          }
+        }
+      }
+    }
+  </script>
+
+</body>
+</html>
+
+ 

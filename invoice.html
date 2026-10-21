@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Create and download a business invoice with this simple invoice generator from YOUR BUSINESS NAME.">
+  <link rel="canonical" href="https://YOUR-DOMAIN.COM/invoice.html">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Invoice Generator | YOUR BUSINESS NAME">
+  <meta property="og:description" content="Create and download a business invoice with this simple invoice generator.">
+  <meta property="og:url" content="https://YOUR-DOMAIN.COM/invoice.html">
+  <meta property="og:image" content="https://YOUR-DOMAIN.COM/officeprint.jpg">
+  <title>Invoice Generator | YOUR BUSINESS NAME</title>
+ 
+  <!-- 1. Tailwind CSS CDN for styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+ 
+  <!-- 2. Alpine.js CDN for reactive data and calculations -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+ 
+  <!-- 3. html2pdf CDN for downloading the invoice as a PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+  <style>
+    html { font-size: 18px; }
+
+    @media print {
+      html { font-size: 16px; }
+      body { background: white; padding: 0; }
+      .no-print { display: none !important; }
+      #invoice-content { max-width: none; border-radius: 0; box-shadow: none; }
+    }
+
+    html.pdf-export { font-size: 16px; }
+    #invoice-content.pdf-export { max-width: 48rem; }
+  </style>
+</head>
+<body class="bg-gray-100 py-10 px-4" x-data="invoiceApp()">
+
+  <nav class="no-print max-w-5xl mx-auto mb-6 flex flex-wrap justify-center gap-4 text-sm font-semibold" aria-label="Page navigation">
+    <a class="text-blue-700 hover:underline" href="index.html">Home</a>
+    <a class="text-blue-700 hover:underline" href="page2.html">Payment Page</a>
+    <a class="text-blue-700 hover:underline" href="invoice.html" aria-current="page">Invoice</a>
+    <a class="text-blue-700 hover:underline" href="quote.html">Quote</a>
+  </nav>
+
+  <!-- Main Invoice Container -->
+  <div class="max-w-5xl mx-auto bg-white p-8 rounded-xl shadow-md" id="invoice-content">
+   
+    <!-- Header -->
+    <div class="flex justify-between items-start border-b pb-6 mb-6">
+      <div>
+        <h1 class="text-3xl font-bold text-gray-800">TAX INVOICE</h1>
+        <p class="text-sm text-gray-500 mt-1">Date: <span x-text="currentDate"></span></p>
+      </div>
+      <div class="text-right">
+        <input type="text" x-model="invoiceNumber" aria-label="Invoice number" placeholder="INV-2026-001" class="border rounded p-1 text-right font-mono font-semibold text-gray-700 w-36">
+      </div>
+    </div>
+
+    <!-- Business & Client Info -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
+      <!-- Your Business / Account Info -->
+      <div class="bg-gray-50 p-4 rounded-lg border">
+        <h3 class="font-semibold text-gray-700 mb-2 text-sm uppercase tracking-wide">Payment Destination</h3>
+        <p class="text-sm text-gray-600"><strong>Account Name:</strong> <input type="text" x-model="accountName" aria-label="Account name" class="border-b bg-transparent w-full text-xs outline-none focus:border-blue-500"></p>
+        <p class="text-sm text-gray-600 mt-1"><strong>ABN:</strong> <input type="text" x-model="abn" :readonly="abnLocked" aria-label="Australian Business Number" inputmode="numeric" maxlength="14" placeholder="12 345 678 901" class="border-b bg-transparent w-full text-xs outline-none focus:border-blue-500"></p>
+        <div class="mt-2 flex gap-3 text-xs no-print">
+          <button x-show="!abnLocked" @click="saveAbn" class="text-blue-600 hover:underline font-semibold">Save and lock ABN</button>
+          <button x-show="abnLocked" @click="editAbn" class="text-blue-600 hover:underline font-semibold">Edit ABN</button>
+          <button x-show="abnEditing" @click="cancelAbnEdit" class="text-gray-600 hover:underline">Cancel</button>
+        </div>
+        <p x-show="abnStatus" x-text="abnStatus" aria-live="polite" class="mt-1 text-xs text-gray-600 no-print"></p>
+        <p class="text-sm text-gray-600 mt-1"><strong>BSB Number:</strong> <input type="text" x-model="bsb" aria-label="BSB number" placeholder="Enter BSB" class="border-b bg-transparent w-full text-xs outline-none focus:border-blue-500"></p>
+        <p class="text-sm text-gray-600 mt-1"><strong>Account Number:</strong> <input type="text" x-model="accountNumber" aria-label="Account number" placeholder="Enter account number" class="border-b bg-transparent w-full text-xs outline-none focus:border-blue-500"></p>
+      </div>
+
+      <!-- Client Details -->
+      <div>
+        <h3 class="font-semibold text-gray-700 mb-2 text-sm uppercase tracking-wide">Billed To</h3>
+        <input type="text" x-model="clientName" aria-label="Client or business name" placeholder="Client / Business Name" class="border rounded p-2 w-full text-sm mb-2">
+        <textarea x-model="clientAddress" aria-label="Client address and details" placeholder="Client Address / Details..." class="border rounded p-2 w-full text-xs h-16 resize-none"></textarea>
+      </div>
+    </div>
+
+    <!-- Line Items Table -->
+    <div class="mb-6 overflow-x-auto">
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="border-b bg-gray-50 text-xs font-semibold text-gray-600 uppercase">
+            <th class="py-2 px-3">Description</th>
+            <th class="py-2 px-3 w-20 text-center">Qty</th>
+            <th class="py-2 px-3 w-28 text-right">Rate ($)</th>
+            <th class="py-2 px-3 w-28 text-right">Amount ($)</th>
+            <th class="py-2 px-3 w-10 no-print"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(item, index) in items" :key="index">
+            <tr class="border-b text-sm">
+              <td class="py-2 px-3"><input type="text" x-model="item.description" aria-label="Item description" placeholder="Service or part description" class="w-full border rounded p-1 text-sm"></td>
+              <td class="py-2 px-3"><input type="number" min="0" step="any" x-model.number="item.qty" @input="calculateTotals" aria-label="Quantity" class="w-full border rounded p-1 text-center text-sm"></td>
+              <td class="py-2 px-3"><input type="text" inputmode="decimal" x-model="item.rate" @input="calculateTotals" @blur="formatRate(item)" aria-label="Rate in dollars and cents" placeholder="0.00" class="w-full border rounded p-1 text-right text-sm"></td>
+              <td class="py-2 px-3 text-right font-medium text-gray-700" x-text="lineAmount(item).toFixed(2)"></td>
+              <td class="py-2 px-3 text-center no-print">
+                <button @click="removeItem(index)" :aria-label="`Remove item ${index + 1}`" class="text-red-500 hover:text-red-700 font-bold">&times;</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+     
+      <!-- Add Item Button -->
+      <button @click="addItem" class="mt-3 text-sm text-blue-600 hover:text-blue-800 font-semibold no-print">+ Add Line Item</button>
+    </div>
+
+    <!-- Totals Summary -->
+    <div class="flex justify-end border-t pt-4 mb-8">
+      <div class="w-64 space-y-2">
+        <label class="flex items-start gap-2 text-sm text-gray-600">
+          <input type="checkbox" :checked="gstMode === 'add'" @change="selectGstMode('add', $event.target.checked)" aria-label="Add 10 percent GST to prices" class="mt-1">
+          <span>Add 10% GST to prices</span>
+        </label>
+        <label class="flex items-start gap-2 text-sm text-gray-600">
+          <input type="checkbox" :checked="gstMode === 'included'" @change="selectGstMode('included', $event.target.checked)" aria-label="GST is included in prices" class="mt-1">
+          <span>GST (10%) is already included in prices</span>
+        </label>
+        <div class="flex justify-between text-sm text-gray-600">
+          <span x-text="gstMode === 'included' ? 'Subtotal (GST inclusive):' : 'Subtotal:'"></span>
+          <span>$<span x-text="subtotal"></span></span>
+        </div>
+        <div class="flex justify-between text-sm text-gray-600">
+          <span>GST (<span x-text="(gstRate * 100).toFixed(0)"></span>%):</span>
+          <span>$<span x-text="gstAmount"></span></span>
+        </div>
+        <div class="flex justify-between text-lg font-bold text-gray-800 border-t pt-2">
+          <span>Total Due:</span>
+          <span>$<span x-text="grandTotal"></span></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Direct Payment Link Section -->
+    <div x-show="safePaymentLink" class="text-center bg-green-50 p-4 rounded-lg border border-green-200 no-print">
+      <p class="text-sm text-green-800 mb-2">Ready to collect payment?</p>
+      <a :href="safePaymentLink" target="_blank" rel="noopener noreferrer" class="inline-block bg-green-600 text-white px-6 py-2 rounded-lg font-semibold text-sm hover:bg-green-700 transition">
+        Pay Online Now
+      </a>
+    </div>
+
+  </div>
+
+  <!-- Action Buttons Toolbar (Hidden in PDF/Print) -->
+  <div class="max-w-5xl mx-auto mt-6 flex justify-between items-center no-print">
+    <div class="flex items-center gap-2">
+      <input type="url" x-model="paymentLink" aria-label="Payment URL" placeholder="Paste your Stripe/PayPal link here..." class="border rounded p-2 text-xs w-72">
+      <span class="text-xs text-gray-500">Payment URL</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <button @click="nextInvoice" class="bg-green-600 text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-green-700 shadow transition">
+        Next Invoice
+      </button>
+      <button @click="downloadPDF" class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 shadow transition">
+        Download PDF
+      </button>
+    </div>
+  </div>
+  <p x-show="saveStatus" x-text="saveStatus" aria-live="polite" class="no-print max-w-5xl mx-auto mt-2 text-sm text-gray-700 text-right"></p>
+
+  <!-- Saved Invoices -->
+  <div x-show="savedInvoices.length" class="no-print max-w-5xl mx-auto mt-6 bg-white p-4 rounded-xl shadow-md">
+    <h2 class="font-semibold text-gray-700 mb-2 text-sm uppercase tracking-wide">Saved Invoices</h2>
+    <table class="w-full text-sm text-left">
+      <thead>
+        <tr class="border-b text-xs text-gray-600 uppercase">
+          <th class="py-1 px-2">Invoice</th>
+          <th class="py-1 px-2">Date</th>
+          <th class="py-1 px-2">Client</th>
+          <th class="py-1 px-2 text-right">Total ($)</th>
+          <th class="py-1 px-2"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="saved in savedInvoices" :key="saved.invoiceNumber">
+          <tr class="border-b">
+            <td class="py-1 px-2 font-mono" x-text="saved.invoiceNumber"></td>
+            <td class="py-1 px-2" x-text="saved.currentDate"></td>
+            <td class="py-1 px-2" x-text="saved.clientName"></td>
+            <td class="py-1 px-2 text-right" x-text="saved.grandTotal"></td>
+            <td class="py-1 px-2 text-right whitespace-nowrap">
+              <button @click="loadInvoice(saved.invoiceNumber)" class="text-blue-600 hover:underline font-semibold">Open</button>
+              <button @click="deleteInvoice(saved.invoiceNumber)" class="text-red-500 hover:underline ml-3">Delete</button>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Alpine.js Application Logic -->
+  <script>
+    function invoiceApp() {
+      return {
+        init() {
+          try {
+            const savedAbn = localStorage.getItem('invoiceAbn');
+            if (savedAbn) {
+              this.abn = savedAbn;
+              this.savedAbn = savedAbn;
+              this.abnLocked = true;
+            }
+          } catch (error) {
+            console.error('Could not load the saved ABN:', error);
+            this.abnStatus = 'Could not load the saved ABN from this browser.';
+          }
+          try {
+            const list = JSON.parse(localStorage.getItem('savedInvoices') || '[]');
+            this.savedInvoices = Array.isArray(list) ? list : [];
+            const nextNumber = localStorage.getItem('nextInvoiceNumber');
+            if (nextNumber) this.invoiceNumber = nextNumber;
+          } catch (error) {
+            console.error('Could not load saved invoices:', error);
+          }
+        },
+        savedInvoices: [],
+        saveStatus: '',
+        currentDate: new Date().toLocaleDateString(),
+        invoiceNumber: 'INV-2026-001',
+        accountName: 'Your Business Name',
+        abn: '',
+        savedAbn: '',
+        abnLocked: false,
+        abnEditing: false,
+        abnStatus: '',
+        bsb: '',
+        accountNumber: '',
+        clientName: '',
+        clientAddress: '',
+        paymentLink: '',
+        gstRate: 0.10,
+        gstMode: 'none',
+        items: [
+          { description: 'Sample Service / Part', qty: 1, rate: '100.00' }
+        ],
+        subtotal: '100.00',
+        gstAmount: '0.00',
+        grandTotal: '100.00',
+
+        saveAbn() {
+          const digits = this.abn.replace(/\s/g, '');
+          if (!/^\d{11}$/.test(digits)) {
+            this.abnStatus = 'Enter an 11-digit ABN.';
+            return;
+          }
+
+          const formattedAbn = digits.replace(/^(\d{2})(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3 $4');
+          try {
+            localStorage.setItem('invoiceAbn', formattedAbn);
+            this.abn = formattedAbn;
+            this.savedAbn = formattedAbn;
+            this.abnLocked = true;
+            this.abnEditing = false;
+            this.abnStatus = 'ABN saved and locked in this browser.';
+          } catch (error) {
+            console.error('Could not save the ABN:', error);
+            this.abnStatus = 'Could not save the ABN. Check browser storage settings and try again.';
+          }
+        },
+
+        editAbn() {
+          this.abnEditing = true;
+          this.abnLocked = false;
+          this.abnStatus = '';
+        },
+
+        cancelAbnEdit() {
+          this.abn = this.savedAbn;
+          this.abnEditing = false;
+          this.abnLocked = true;
+          this.abnStatus = '';
+        },
+
+        addItem() {
+          this.items.push({ description: '', qty: 1, rate: '0.00' });
+          this.calculateTotals();
+        },
+
+        removeItem(index) {
+          if (this.items.length > 1) {
+            this.items.splice(index, 1);
+            this.calculateTotals();
+          }
+        },
+
+        calculateTotals() {
+          const subtotal = Number(this.items.reduce((acc, item) => acc + this.lineAmount(item), 0).toFixed(2));
+          const gst = Number((this.gstMode === 'included'
+            ? subtotal * this.gstRate / (1 + this.gstRate)
+            : this.gstMode === 'add' ? subtotal * this.gstRate : 0).toFixed(2));
+          this.subtotal = subtotal.toFixed(2);
+          this.gstAmount = gst.toFixed(2);
+          this.grandTotal = (this.gstMode === 'add' ? subtotal + gst : subtotal).toFixed(2);
+        },
+
+        selectGstMode(mode, enabled) {
+          if (enabled) {
+            this.gstMode = mode;
+          } else if (this.gstMode === mode) {
+            this.gstMode = 'none';
+          }
+          this.calculateTotals();
+        },
+
+        lineAmount(item) {
+          const qty = Number(item.qty);
+          const rate = Number(item.rate);
+          if (!Number.isFinite(qty) || !Number.isFinite(rate) || qty < 0 || rate < 0) return 0;
+          const amount = qty * rate;
+          return Number.isFinite(amount) ? amount : 0;
+        },
+
+        formatRate(item) {
+          if (item.rate === '') return;
+          const rate = Number(item.rate);
+          if (!Number.isFinite(rate) || rate < 0) return;
+          item.rate = rate.toFixed(2);
+          this.calculateTotals();
+        },
+
+        nextNumberAfter(number) {
+          const match = number.match(/^(.*?)(\d+)(\D*)$/);
+          if (!match) return number + '-2';
+          const next = String(Number(match[2]) + 1).padStart(match[2].length, '0');
+          return match[1] + next + match[3];
+        },
+
+        persistInvoice() {
+          const number = this.invoiceNumber.trim();
+          if (!number) return false;
+          const existing = this.savedInvoices.findIndex(inv => inv.invoiceNumber === number);
+
+          const record = JSON.parse(JSON.stringify({
+            invoiceNumber: number,
+            currentDate: this.currentDate,
+            accountName: this.accountName,
+            bsb: this.bsb,
+            accountNumber: this.accountNumber,
+            clientName: this.clientName,
+            clientAddress: this.clientAddress,
+            paymentLink: this.paymentLink,
+            gstMode: this.gstMode,
+            items: this.items,
+            subtotal: this.subtotal,
+            gstAmount: this.gstAmount,
+            grandTotal: this.grandTotal
+          }));
+          const updated = [...this.savedInvoices];
+          if (existing !== -1) updated[existing] = record; else updated.push(record);
+
+          try {
+            localStorage.setItem('savedInvoices', JSON.stringify(updated));
+          } catch (error) {
+            console.error('Could not save the invoice:', error);
+            this.saveStatus = 'PDF downloaded, but a copy could not be kept in this browser.';
+            return false;
+          }
+          this.savedInvoices = updated;
+          this.saveStatus = `Invoice ${number} downloaded and saved.`;
+          return true;
+        },
+
+        nextInvoice() {
+          const number = this.invoiceNumber.trim();
+          const alreadySaved = this.savedInvoices.some(inv => inv.invoiceNumber === number);
+          if (!alreadySaved && !confirm(`Invoice ${number} has not been downloaded. Move to the next invoice anyway?`)) return;
+          const next = this.nextNumberAfter(number || 'INV-2026-000');
+          try {
+            localStorage.setItem('nextInvoiceNumber', next);
+          } catch (error) {
+            console.error('Could not store the next invoice number:', error);
+          }
+          this.invoiceNumber = next;
+          this.saveStatus = `Now on invoice ${next}.`;
+          this.currentDate = new Date().toLocaleDateString();
+          this.clientName = '';
+          this.clientAddress = '';
+          this.paymentLink = '';
+          this.gstMode = 'none';
+          this.items = [{ description: '', qty: 1, rate: '0.00' }];
+          this.calculateTotals();
+        },
+
+        loadInvoice(number) {
+          const saved = this.savedInvoices.find(inv => inv.invoiceNumber === number);
+          if (!saved) return;
+          Object.assign(this, JSON.parse(JSON.stringify(saved)));
+          this.saveStatus = `Invoice ${number} opened. Download the PDF again to update it.`;
+        },
+
+        deleteInvoice(number) {
+          if (!confirm(`Delete saved invoice ${number}?`)) return;
+          const updated = this.savedInvoices.filter(inv => inv.invoiceNumber !== number);
+          try {
+            localStorage.setItem('savedInvoices', JSON.stringify(updated));
+          } catch (error) {
+            console.error('Could not delete the invoice:', error);
+            this.saveStatus = 'Could not delete the invoice.';
+            return;
+          }
+          this.savedInvoices = updated;
+          this.saveStatus = `Invoice ${number} deleted.`;
+        },
+
+        get safePaymentLink() {
+          try {
+            const url = new URL(this.paymentLink);
+            return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
+          } catch {
+            return '';
+          }
+        },
+
+        async downloadPDF() {
+          const element = document.getElementById('invoice-content');
+          const filename = (this.invoiceNumber.trim() || 'invoice').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+          const opt = {
+            margin:       0.4,
+            filename:     `${filename}.pdf`,
+            image:        { type: 'jpeg', quality: 0.98 },
+            html2canvas:  { scale: 2, useCORS: true },
+            jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+          };
+          if (typeof html2pdf !== 'function') {
+            alert('PDF export is unavailable. Check your internet connection and try again.');
+            return;
+          }
+          document.documentElement.classList.add('pdf-export');
+          try {
+            await html2pdf().set(opt).from(element).save();
+            this.persistInvoice();
+          } catch (error) {
+            console.error('PDF export failed:', error);
+            alert('Could not create the PDF. Please try again.');
+          } finally {
+            document.documentElement.classList.remove('pdf-export');
+          }
+        }
+      }
+    }
+  </script>
+
+</body>
+</html>
+
+ 
