@@ -202,6 +202,21 @@
     </table>
   </div>
 
+  <!-- Backup and export -->
+  <div class="no-print max-w-5xl mx-auto mt-6 bg-white p-4 rounded-xl shadow-md">
+    <h2 class="font-semibold text-gray-700 mb-1 text-sm uppercase tracking-wide">Backup &amp; Export</h2>
+    <p class="text-xs text-gray-600 mb-3">Saved quotes live only in this browser. Download a backup regularly, and use the CSV for your accountant.</p>
+    <div class="flex flex-wrap items-center gap-3 text-sm">
+      <button @click="exportCsv" class="bg-gray-700 text-white px-4 py-2 rounded-lg font-semibold hover:bg-gray-800 shadow transition">Export CSV</button>
+      <button @click="downloadBackup" class="bg-gray-700 text-white px-4 py-2 rounded-lg font-semibold hover:bg-gray-800 shadow transition">Download backup</button>
+      <label class="bg-white border border-gray-400 text-gray-700 px-4 py-2 rounded-lg font-semibold hover:bg-gray-50 shadow-sm transition cursor-pointer focus-within:ring-2 focus-within:ring-blue-500">
+        Restore backup
+        <input type="file" accept="application/json,.json" class="sr-only" @change="restoreBackup($event)">
+      </label>
+    </div>
+    <p x-show="backupStatus" x-text="backupStatus" aria-live="polite" class="mt-2 text-xs text-gray-700"></p>
+  </div>
+
   <!-- Alpine.js Application Logic -->
   <script>
     function quoteApp() {
@@ -232,6 +247,7 @@
         },
         savedQuotes: [],
         saveStatus: '',
+        backupStatus: '',
         gstRate: 0.10,
         gstMode: 'none',
         gstAmount: '0.00',
@@ -428,6 +444,157 @@
           }
           this.savedQuotes = updated;
           this.saveStatus = `Quote ${number} deleted.`;
+        },
+
+        today() {
+          return new Date().toISOString().slice(0, 10);
+        },
+
+        downloadFile(filename, content, type) {
+          const url = URL.createObjectURL(new Blob([content], { type }));
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        },
+
+        csvCell(value) {
+          let text = String(value ?? '');
+          // Stop spreadsheet apps treating text as a formula.
+          if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;
+          return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+        },
+
+        exportCsv() {
+          if (!this.savedQuotes.length) {
+            this.backupStatus = 'Nothing to export yet. Download a PDF first to save a quote.';
+            return;
+          }
+          const gstLabels = { none: 'No GST', add: 'GST added', included: 'GST included' };
+          const header = ['Quote Number', 'Issued', 'Valid Until', 'Client', 'GST Treatment', 'Subtotal', 'GST', 'Total', 'Line Items'];
+          const rows = this.savedQuotes.map(q => [
+            q.quoteNumber, q.currentDate, q.validUntil, q.clientName, gstLabels[q.gstMode] || 'No GST',
+            q.subtotal, q.gstAmount, q.grandTotal,
+            (q.items || []).map(i => `${i.description} (${i.qty} x ${i.rate})`).join('; ')
+          ]);
+          const csv = '\uFEFF' + [header, ...rows].map(row => row.map(cell => this.csvCell(cell)).join(',')).join('\r\n');
+          this.downloadFile(`quotes-${this.today()}.csv`, csv, 'text/csv;charset=utf-8');
+          this.backupStatus = `Exported ${rows.length} quote${rows.length === 1 ? '' : 's'} to CSV.`;
+        },
+
+        downloadBackup() {
+          if (!this.savedQuotes.length) {
+            this.backupStatus = 'Nothing to back up yet. Download a PDF first to save a quote.';
+            return;
+          }
+          let nextQuoteNumber = null;
+          try { nextQuoteNumber = localStorage.getItem('nextQuoteNumber'); } catch (error) { console.error(error); }
+          const payload = {
+            app: 'simple-office', kind: 'quotes', version: 1,
+            exportedAt: new Date().toISOString(),
+            nextQuoteNumber,
+            quotes: this.savedQuotes
+          };
+          this.downloadFile(`quotes-backup-${this.today()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+          this.backupStatus = `Backup of ${this.savedQuotes.length} quote${this.savedQuotes.length === 1 ? '' : 's'} downloaded. Keep it somewhere safe.`;
+        },
+
+        cleanQuote(record) {
+          if (!record || typeof record !== 'object') return null;
+          const text = (value, max = 500) => typeof value === 'string' ? value.slice(0, max) : '';
+          const quoteNumber = text(record.quoteNumber, 60).trim();
+          if (!quoteNumber) return null;
+          const items = (Array.isArray(record.items) ? record.items : []).slice(0, 200).map(raw => {
+            const item = raw && typeof raw === 'object' ? raw : {};
+            const qty = Number(item.qty);
+            const rate = Number(item.rate);
+            return {
+              description: text(item.description),
+              qty: Number.isFinite(qty) && qty >= 0 ? qty : 0,
+              rate: Number.isFinite(rate) && rate >= 0 ? rate.toFixed(2) : '0.00'
+            };
+          });
+          if (!items.length) items.push({ description: '', qty: 1, rate: '0.00' });
+          const gstMode = ['none', 'add', 'included'].includes(record.gstMode) ? record.gstMode : 'none';
+          const subtotal = Number(items.reduce((sum, item) => sum + this.lineAmount(item), 0).toFixed(2));
+          const gst = Number((gstMode === 'included'
+            ? subtotal * this.gstRate / (1 + this.gstRate)
+            : gstMode === 'add' ? subtotal * this.gstRate : 0).toFixed(2));
+          return {
+            quoteNumber,
+            currentDate: text(record.currentDate, 40),
+            validUntil: text(record.validUntil, 40),
+            businessName: text(record.businessName, 200),
+            businessContact: text(record.businessContact, 300),
+            clientName: text(record.clientName, 200),
+            clientAddress: text(record.clientAddress, 500),
+            quoteNotes: text(record.quoteNotes, 2000),
+            approvalName: text(record.approvalName, 200),
+            approvalDate: text(record.approvalDate, 40),
+            gstMode,
+            items,
+            subtotal: subtotal.toFixed(2),
+            gstAmount: gst.toFixed(2),
+            grandTotal: (gstMode === 'add' ? subtotal + gst : subtotal).toFixed(2)
+          };
+        },
+
+        restoreBackup(event) {
+          const input = event.target;
+          const file = input.files && input.files[0];
+          input.value = '';
+          if (!file) return;
+          if (file.size > 5 * 1024 * 1024) {
+            this.backupStatus = 'That file is too large to be a quote backup.';
+            return;
+          }
+          const reader = new FileReader();
+          reader.onerror = () => { this.backupStatus = 'Could not read that file.'; };
+          reader.onload = () => {
+            let data;
+            try {
+              data = JSON.parse(reader.result);
+            } catch (error) {
+              this.backupStatus = 'That file is not a valid backup.';
+              return;
+            }
+            if (!data || data.app !== 'simple-office' || data.kind !== 'quotes' || !Array.isArray(data.quotes)) {
+              this.backupStatus = 'That file is not a quote backup from this app.';
+              return;
+            }
+            const incoming = data.quotes.map(record => this.cleanQuote(record)).filter(Boolean);
+            if (!incoming.length) {
+              this.backupStatus = 'No quotes were found in that backup.';
+              return;
+            }
+            const replaced = incoming.filter(rec => this.savedQuotes.some(s => s.quoteNumber === rec.quoteNumber)).length;
+            const message = `Restore ${incoming.length} quote${incoming.length === 1 ? '' : 's'} from this backup?` +
+              (replaced ? ` ${replaced} saved here with the same number will be replaced.` : '');
+            if (!confirm(message)) return;
+            const wasEmpty = this.savedQuotes.length === 0;
+            const merged = [...this.savedQuotes];
+            for (const rec of incoming) {
+              const index = merged.findIndex(s => s.quoteNumber === rec.quoteNumber);
+              if (index !== -1) merged[index] = rec; else merged.push(rec);
+            }
+            try {
+              localStorage.setItem('savedQuotes', JSON.stringify(merged));
+              if (wasEmpty && typeof data.nextQuoteNumber === 'string' && data.nextQuoteNumber.length <= 60 && data.nextQuoteNumber.trim()) {
+                localStorage.setItem('nextQuoteNumber', data.nextQuoteNumber.trim());
+                this.quoteNumber = data.nextQuoteNumber.trim();
+              }
+            } catch (error) {
+              console.error('Could not restore the backup:', error);
+              this.backupStatus = 'Could not store the restored quotes in this browser.';
+              return;
+            }
+            this.savedQuotes = merged;
+            this.backupStatus = `Restored ${incoming.length} quote${incoming.length === 1 ? '' : 's'}.`;
+          };
+          reader.readAsText(file);
         },
 
         async downloadPDF() {

@@ -197,6 +197,21 @@
     </table>
   </div>
 
+  <!-- Backup and export -->
+  <div class="no-print max-w-5xl mx-auto mt-6 bg-white p-4 rounded-xl shadow-md">
+    <h2 class="font-semibold text-gray-700 mb-1 text-sm uppercase tracking-wide">Backup &amp; Export</h2>
+    <p class="text-xs text-gray-600 mb-3">Saved invoices live only in this browser. Download a backup regularly, and use the CSV for your accountant.</p>
+    <div class="flex flex-wrap items-center gap-3 text-sm">
+      <button @click="exportCsv" class="bg-gray-700 text-white px-4 py-2 rounded-lg font-semibold hover:bg-gray-800 shadow transition">Export CSV</button>
+      <button @click="downloadBackup" class="bg-gray-700 text-white px-4 py-2 rounded-lg font-semibold hover:bg-gray-800 shadow transition">Download backup</button>
+      <label class="bg-white border border-gray-400 text-gray-700 px-4 py-2 rounded-lg font-semibold hover:bg-gray-50 shadow-sm transition cursor-pointer focus-within:ring-2 focus-within:ring-blue-500">
+        Restore backup
+        <input type="file" accept="application/json,.json" class="sr-only" @change="restoreBackup($event)">
+      </label>
+    </div>
+    <p x-show="backupStatus" x-text="backupStatus" aria-live="polite" class="mt-2 text-xs text-gray-700"></p>
+  </div>
+
   <!-- Alpine.js Application Logic -->
   <script>
     function invoiceApp() {
@@ -224,6 +239,7 @@
         },
         savedInvoices: [],
         saveStatus: '',
+        backupStatus: '',
         currentDate: new Date().toLocaleDateString(),
         invoiceNumber: 'INV-2026-001',
         accountName: 'Your Business Name',
@@ -409,6 +425,155 @@
           }
           this.savedInvoices = updated;
           this.saveStatus = `Invoice ${number} deleted.`;
+        },
+
+        today() {
+          return new Date().toISOString().slice(0, 10);
+        },
+
+        downloadFile(filename, content, type) {
+          const url = URL.createObjectURL(new Blob([content], { type }));
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        },
+
+        csvCell(value) {
+          let text = String(value ?? '');
+          // Stop spreadsheet apps treating text as a formula.
+          if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;
+          return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+        },
+
+        exportCsv() {
+          if (!this.savedInvoices.length) {
+            this.backupStatus = 'Nothing to export yet. Download a PDF first to save an invoice.';
+            return;
+          }
+          const gstLabels = { none: 'No GST', add: 'GST added', included: 'GST included' };
+          const header = ['Invoice Number', 'Date', 'Client', 'GST Treatment', 'Subtotal', 'GST', 'Total', 'Line Items'];
+          const rows = this.savedInvoices.map(inv => [
+            inv.invoiceNumber, inv.currentDate, inv.clientName, gstLabels[inv.gstMode] || 'No GST',
+            inv.subtotal, inv.gstAmount, inv.grandTotal,
+            (inv.items || []).map(i => `${i.description} (${i.qty} x ${i.rate})`).join('; ')
+          ]);
+          const csv = '\uFEFF' + [header, ...rows].map(row => row.map(cell => this.csvCell(cell)).join(',')).join('\r\n');
+          this.downloadFile(`invoices-${this.today()}.csv`, csv, 'text/csv;charset=utf-8');
+          this.backupStatus = `Exported ${rows.length} invoice${rows.length === 1 ? '' : 's'} to CSV.`;
+        },
+
+        downloadBackup() {
+          if (!this.savedInvoices.length) {
+            this.backupStatus = 'Nothing to back up yet. Download a PDF first to save an invoice.';
+            return;
+          }
+          let nextInvoiceNumber = null;
+          try { nextInvoiceNumber = localStorage.getItem('nextInvoiceNumber'); } catch (error) { console.error(error); }
+          const payload = {
+            app: 'simple-office', kind: 'invoices', version: 1,
+            exportedAt: new Date().toISOString(),
+            nextInvoiceNumber,
+            invoices: this.savedInvoices
+          };
+          this.downloadFile(`invoices-backup-${this.today()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+          this.backupStatus = `Backup of ${this.savedInvoices.length} invoice${this.savedInvoices.length === 1 ? '' : 's'} downloaded. Keep it somewhere safe.`;
+        },
+
+        cleanInvoice(record) {
+          if (!record || typeof record !== 'object') return null;
+          const text = (value, max = 500) => typeof value === 'string' ? value.slice(0, max) : '';
+          const invoiceNumber = text(record.invoiceNumber, 60).trim();
+          if (!invoiceNumber) return null;
+          const items = (Array.isArray(record.items) ? record.items : []).slice(0, 200).map(raw => {
+            const item = raw && typeof raw === 'object' ? raw : {};
+            const qty = Number(item.qty);
+            const rate = Number(item.rate);
+            return {
+              description: text(item.description),
+              qty: Number.isFinite(qty) && qty >= 0 ? qty : 0,
+              rate: Number.isFinite(rate) && rate >= 0 ? rate.toFixed(2) : '0.00'
+            };
+          });
+          if (!items.length) items.push({ description: '', qty: 1, rate: '0.00' });
+          const gstMode = ['none', 'add', 'included'].includes(record.gstMode) ? record.gstMode : 'none';
+          const subtotal = Number(items.reduce((sum, item) => sum + this.lineAmount(item), 0).toFixed(2));
+          const gst = Number((gstMode === 'included'
+            ? subtotal * this.gstRate / (1 + this.gstRate)
+            : gstMode === 'add' ? subtotal * this.gstRate : 0).toFixed(2));
+          return {
+            invoiceNumber,
+            currentDate: text(record.currentDate, 40),
+            accountName: text(record.accountName, 200),
+            bsb: text(record.bsb, 20),
+            accountNumber: text(record.accountNumber, 30),
+            clientName: text(record.clientName, 200),
+            clientAddress: text(record.clientAddress, 500),
+            paymentLink: text(record.paymentLink, 500),
+            gstMode,
+            items,
+            subtotal: subtotal.toFixed(2),
+            gstAmount: gst.toFixed(2),
+            grandTotal: (gstMode === 'add' ? subtotal + gst : subtotal).toFixed(2)
+          };
+        },
+
+        restoreBackup(event) {
+          const input = event.target;
+          const file = input.files && input.files[0];
+          input.value = '';
+          if (!file) return;
+          if (file.size > 5 * 1024 * 1024) {
+            this.backupStatus = 'That file is too large to be an invoice backup.';
+            return;
+          }
+          const reader = new FileReader();
+          reader.onerror = () => { this.backupStatus = 'Could not read that file.'; };
+          reader.onload = () => {
+            let data;
+            try {
+              data = JSON.parse(reader.result);
+            } catch (error) {
+              this.backupStatus = 'That file is not a valid backup.';
+              return;
+            }
+            if (!data || data.app !== 'simple-office' || data.kind !== 'invoices' || !Array.isArray(data.invoices)) {
+              this.backupStatus = 'That file is not an invoice backup from this app.';
+              return;
+            }
+            const incoming = data.invoices.map(record => this.cleanInvoice(record)).filter(Boolean);
+            if (!incoming.length) {
+              this.backupStatus = 'No invoices were found in that backup.';
+              return;
+            }
+            const replaced = incoming.filter(rec => this.savedInvoices.some(s => s.invoiceNumber === rec.invoiceNumber)).length;
+            const message = `Restore ${incoming.length} invoice${incoming.length === 1 ? '' : 's'} from this backup?` +
+              (replaced ? ` ${replaced} saved here with the same number will be replaced.` : '');
+            if (!confirm(message)) return;
+            const wasEmpty = this.savedInvoices.length === 0;
+            const merged = [...this.savedInvoices];
+            for (const rec of incoming) {
+              const index = merged.findIndex(s => s.invoiceNumber === rec.invoiceNumber);
+              if (index !== -1) merged[index] = rec; else merged.push(rec);
+            }
+            try {
+              localStorage.setItem('savedInvoices', JSON.stringify(merged));
+              if (wasEmpty && typeof data.nextInvoiceNumber === 'string' && data.nextInvoiceNumber.length <= 60 && data.nextInvoiceNumber.trim()) {
+                localStorage.setItem('nextInvoiceNumber', data.nextInvoiceNumber.trim());
+                this.invoiceNumber = data.nextInvoiceNumber.trim();
+              }
+            } catch (error) {
+              console.error('Could not restore the backup:', error);
+              this.backupStatus = 'Could not store the restored invoices in this browser.';
+              return;
+            }
+            this.savedInvoices = merged;
+            this.backupStatus = `Restored ${incoming.length} invoice${incoming.length === 1 ? '' : 's'}.`;
+          };
+          reader.readAsText(file);
         },
 
         get safePaymentLink() {

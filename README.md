@@ -65,6 +65,8 @@ The client should create their own Cloudflare account so their login list is the
 ## 6. Handover notes for the client
 
 - **Saved invoices and quotes live only in that browser** on that device. Clearing browser data or changing devices deletes them. Download the PDF of everything and keep copies.
+- **Backup & Export** (bottom of the invoice and quote pages): **Download backup** saves a `.json` file of every saved record, and **Restore backup** loads it back on any browser or device. **Export CSV** gives a spreadsheet for the client's accountant. Ask the client to download a backup at least monthly.
+- Restoring merges with what is already saved. Records with the same number are replaced after a confirmation. On an empty browser it also restores the next invoice/quote number.
 - Invoice and quote pages load Tailwind, Alpine and html2pdf from the internet, so PDF export needs a connection.
 - Enter the client's own ABN. The ABN field locks once saved.
 - The default invoice heading says **TAX INVOICE**. Only a GST-registered seller should use that label, and tax invoices need specific details. Have the client's accountant confirm the wording before use.
